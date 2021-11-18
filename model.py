@@ -1,16 +1,19 @@
 import numpy as np
 from math import log, pi
+from sys import exit as e
 
 import torch
 import torch.nn.functional as F
 from torch import nn
 
-from sys import exit as e
 
 
+nan_fn = lambda x: [torch.sum(torch.isnan(j)) for j in x]
+max_fn = lambda x: torch.max(x)
+min_fn = lambda x: torch.min(x)
 
 def gaussian_log_p(x, mean, log_sd):
-  return -0.5 * log(2 * pi) - log_sd - 0.5 * (x - mean) ** 2 / torch.exp(2 * log_sd)
+  return -0.5 * log(2 * pi) - log_sd - 0.5 * ((x - mean) ** 2 / torch.exp(log_sd))
 
 
 def gaussian_sample(eps, mean, log_sd):
@@ -18,50 +21,6 @@ def gaussian_sample(eps, mean, log_sd):
 
 
 logabs = lambda x: torch.log(torch.abs(x))
-
-
-class ActNorm(nn.Module):
-  def __init__(self, in_channel, logdet=True):
-    super().__init__()
-
-    self.loc = nn.Parameter(torch.zeros(1, in_channel))
-    self.scale = nn.Parameter(torch.ones(1, in_channel))
-
-    self.register_buffer("initialized", torch.tensor(0, dtype=torch.uint8))
-    self.logdet = logdet
-
-  def initialize(self, input):
-    with torch.no_grad():
-        flatten = input.permute(1, 0).contiguous()
-        mean = (
-            flatten.mean(1)
-            .unsqueeze(1)
-            .permute(1, 0)
-        )
-        std = (
-            flatten.std(1)
-            .unsqueeze(1)
-            .permute(1, 0)
-        )
-        self.loc.data.copy_(-mean)
-        self.scale.data.copy_(1 / (std + 1e-6))
-
-  def forward(self, input):
-    # _, _, height, width = input.shape
-
-    if self.initialized.item() == 0:
-        self.initialize(input)
-        self.initialized.fill_(1)
-
-    log_abs = logabs(self.scale)
-
-    logdet = torch.sum(log_abs)
-
-    return self.scale * (input + self.loc), logdet
-
-  def reverse(self, output):
-    return output / self.scale - self.loc
-
 
 class Invertible1x1Conv(nn.Module):
   """ 
@@ -91,7 +50,7 @@ class Invertible1x1Conv(nn.Module):
     log_det = torch.sum(torch.log(torch.abs(self.S)))
     return z, log_det
 
-  def reverse(self, z):
+  def backward(self, z):
     W = self._assemble_W()
     W_inv = torch.inverse(W)
     x = z @ W_inv
@@ -99,123 +58,188 @@ class Invertible1x1Conv(nn.Module):
     return x, log_det
 
 
-class ZeroNN(nn.Module):
-  def __init__(self, in_chan, out_chan):
-    super().__init__()
+class AffineConstantFlow(nn.Module):
+    """ 
+    Scales + Shifts the flow by (learned) constants per dimension.
+    In NICE paper there is a Scaling layer which is a special case of this where t is None
+    """
+    def __init__(self, dim, scale=True, shift=True):
+        super().__init__()
+        self.s = nn.Parameter(torch.randn(1, dim, requires_grad=True)) if scale else None
+        self.t = nn.Parameter(torch.randn(1, dim, requires_grad=True)) if shift else None
+        
+    def forward(self, x):
+        s = self.s if self.s is not None else x.new_zeros(x.size())
+        t = self.t if self.t is not None else x.new_zeros(x.size())
+        z = x * torch.exp(s) + t
+        log_det = torch.sum(s, dim=1)
+        return z, log_det
+    
+    def backward(self, z):
+        s = self.s if self.s is not None else z.new_zeros(z.size())
+        t = self.t if self.t is not None else z.new_zeros(z.size())
+        x = (z - t) * torch.exp(-s)
+        log_det = torch.sum(-s, dim=1)
+        return x, log_det
 
-    self.linear = nn.Linear(in_chan, out_chan)
-    self.linear.weight.data.zero_()
-    self.linear.bias.data.zero_()
-    self.scale = nn.Parameter(torch.zeros(1, out_chan))
+
+class ActNorm(AffineConstantFlow):
+  """
+  Really an AffineConstantFlow but with a data-dependent initialization,
+  where on the very first batch we clever initialize the s,t so that the output
+  is unit gaussian. As described in Glow paper.
+  """
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.data_dep_init_done = False
   
   def forward(self, x):
-    out = self.linear(x)
-    out = out * torch.exp(self.scale * 3)
+    # first batch is used for init
+    if not self.data_dep_init_done:
+      assert self.s is not None and self.t is not None # for now
+      self.s.data = (-torch.log(x.std(dim=0, keepdim=True))).detach()
+      self.t.data = (-(x * torch.exp(self.s)).mean(dim=0, keepdim=True)).detach()
+      self.data_dep_init_done = True
+    return super().forward(x)
+
+
+class ZeroNN(nn.Module):
+  def __init__(self, nin, nout):
+    super().__init__()
+
+    self.linear = nn.Linear(nin, nout)
+    self.linear.weight.data.zero_()
+    self.linear.bias.data.zero_()
+
+  def forward(self, input):
+    out = self.linear(input)
     return out
 
-class AffineCoupling(nn.Module):
-  def __init__(self, in_channel, parity, filter_size=32):
-    super().__init__()
 
-    self.parity = parity
+class MLP(nn.Module):
+  """ a simple 4-layer MLP """
+
+  def __init__(self, nin, nout, nh):
+    super().__init__()
     self.net = nn.Sequential(
-      nn.Linear(in_channel//2, filter_size),
-      nn.LeakyReLU(),
-      nn.Linear(filter_size, filter_size),
-      nn.LeakyReLU(),
-      ZeroNN(filter_size, in_channel)
+      nn.Linear(nin, nh),
+      nn.LeakyReLU(0.2),
+      nn.Linear(nh, nh),
+      nn.LeakyReLU(0.2),
+      nn.Linear(nh, nh),
+      nn.LeakyReLU(0.2),
+      ZeroNN(nh, nout)
+      # nn.Linear(nh, nout),
     )
+  def forward(self, x):
+    return self.net(x)
 
-    self.net[0].weight.data.normal_(0, 0.05)
-    self.net[0].bias.data.zero_()
-
-    self.net[2].weight.data.normal_(0, 0.05)
-    self.net[2].bias.data.zero_()
-
-  
-  def forward(self, input):
-    in_a, in_b = input.chunk(2, 1)
-    if self.parity:
-      in_a, in_b = in_b, in_a
-    log_s, t = self.net(in_a).chunk(2, 1)
-    s = torch.sigmoid(log_s + 2)
-    out_b = (in_b + t) * s
-    logdet = torch.sum(torch.log(s).view(input.shape[0], -1), 1)
-    if self.parity:
-      in_a, out_b = out_b, in_a
-    return torch.cat([in_a, out_b], 1), logdet
-  
-  def reverse(self, output):
-    out_a, out_b = output.chunk(2, 1)
-    if self.parity:
-      out_a, out_b = out_b, out_a
-    log_s, t = self.net(out_a).chunk(2, 1)
-    s = torch.sigmoid(log_s + 2)
-    in_b = out_b / s - t
-    if self.parity:
-      out_a, in_b = in_b, out_a
-    return torch.cat([out_a, in_b], 1)
-
-
-class Flow(nn.Module):
-  def __init__(self, in_channel, parity):
+class AffineHalfFlow(nn.Module):
+  """
+  As seen in RealNVP, affine autoregressive flow (z = x * exp(s) + t), where half of the 
+  dimensions in x are linearly scaled/transfromed as a function of the other half.
+  Which half is which is determined by the parity bit.
+  - RealNVP both scales and shifts (default)
+  - NICE only shifts
+  """
+  def __init__(self, dim, parity, net_class=MLP, nh=24, scale=True, shift=True):
     super().__init__()
-
-    self.actnorm = ActNorm(in_channel)
-    self.inconvlu = Invertible1x1Conv(in_channel)
-    self.affine = AffineCoupling(in_channel, parity)
+    self.dim = dim
+    self.parity = parity
+    self.s_cond = lambda x: x.new_zeros(x.size(0), self.dim // 2)
+    self.t_cond = lambda x: x.new_zeros(x.size(0), self.dim // 2)
+    if scale:
+      self.s_cond = net_class(self.dim // 2, self.dim // 2, nh)
+    if shift:
+      self.t_cond = net_class(self.dim // 2, self.dim // 2, nh)
+      
+  def forward(self, x):
+    x0, x1 = x[:,::2], x[:,1::2]
+    if self.parity:
+      x0, x1 = x1, x0
+    s = self.s_cond(x0)
+    t = self.t_cond(x0)
+    z0 = x0 # untouched half
+    z1 = torch.exp(s) * x1 + t # transform this half as a function of the other
+    if self.parity:
+      z0, z1 = z1, z0
+    z = torch.cat([z0, z1], dim=1)
+    log_det = torch.sum(s, dim=1)
+    return z, log_det
   
-  def forward(self, input):
-    out, logdet = self.actnorm(input)
-    out, det1 = self.inconvlu(out)
-    out, det2 = self.affine(out)
+  def backward(self, z):
+    z0, z1 = z[:,::2], z[:,1::2]
+    if self.parity:
+      z0, z1 = z1, z0
+    s = self.s_cond(z0)
+    t = self.t_cond(z0)
+    x0 = z0 # this was the same
+    x1 = (z1 - t) * torch.exp(-s) # reverse the transform on this half
+    if self.parity:
+      x0, x1 = x1, x0
+    x = torch.cat([x0, x1], dim=1)
+    log_det = torch.sum(-s, dim=1)
+    return x, log_det
 
-    logdet = logdet + det1 + det2
+class NormalizingFlow(nn.Module):
+  """ A sequence of Normalizing Flows is a Normalizing Flow """
 
-    return out, logdet
-
-  def reverse(self, output):
-    input = self.affine.reverse(output)
-    input, _ = self.inconvlu.reverse(input)
-    input = self.actnorm.reverse(input)
-    return input
-
-
-class Glow(nn.Module):
-  def __init__(self, in_channel, n_flows):
+  def __init__(self, flows):
     super().__init__()
+    self.flows = nn.ModuleList(flows)
 
-    self.flows = nn.ModuleList()
-    for i in range(n_flows):
-      parity = int(i%2)
-      self.flows.append(Flow(in_channel, parity))
-    self.prior = ZeroNN(in_channel, in_channel*2)
-
-  def forward(self, input):
-    b_size = input.size(0)
-    out = input 
-    logdet = 0
-  
+  def forward(self, x):
+    m, _ = x.shape
+    log_det = torch.zeros(m)
+    zs = [x]
     for flow in self.flows:
-      out, det = flow(out)
-      logdet += det
-  
-  
-    zero = torch.zeros_like(out)
-    mean, log_sd = self.prior(zero).chunk(2, 1)
-    log_p = gaussian_log_p(out, mean, log_sd)
-    log_p = log_p.view(b_size, -1).sum(1)
+      x, ld = flow.forward(x)
+      log_det += ld
+      zs.append(x)
+    
+    return zs, log_det
 
-    return out, logdet, log_p
-
-
-  def reverse(self, output, eps=None):
-    # input = eps
-    zero = torch.zeros_like(output)
-    mean, log_sd = self.prior(zero).chunk(2, 1)
-    z = gaussian_sample(output, mean, log_sd)
-    input = z
-
+  def backward(self, z):
+    m, _ = z.shape
+    log_det = torch.zeros(m)
+    xs = [z]
     for flow in self.flows[::-1]:
-        input = flow.reverse(input)
-    return input
+      z, ld = flow.backward(z)
+      log_det += ld
+      xs.append(z)
+    return xs, log_det
+
+class NormalizingFlowModel(nn.Module):
+  """ A Normalizing Flow Model is a (prior, flow) pair """
+  
+  def __init__(self, flows, nin, prior=None):
+    super().__init__()
+    # self.prior = prior
+    self.prior = ZeroNN(nin, nin*2)
+    self.flow = NormalizingFlow(flows)
+  
+  def forward(self, x):
+    zs, log_det = self.flow.forward(x)
+    
+    mean, log_sd = self.prior(zs[-1]).chunk(2, 1)
+
+    # log_sd = log_sd.mean(0)
+    # mean = mean.mean(0)
+    # prior_logprob = gaussian_log_p(zs[-1], mean, log_sd).view(x.size(0), -1).sum(1)
+    
+    # prior_logprob = self.prior.log_prob(zs[-1]).view(x.size(0), -1).sum(1)
+    return zs, log_det, mean, log_sd
+
+  def backward(self, z):
+    xs, log_det = self.flow.backward(z)
+    return xs, log_det
+
+  def sample(self, num_samples):
+    z_rec = torch.FloatTensor(num_samples, 2).normal_(0, 1)
+    mean, log_sd = self.prior(z_rec).chunk(2, 1)
+    log_sd = log_sd.mean(0)
+    mean = mean.mean(0)
+    z = gaussian_sample(z_rec, mean, log_sd)
+    # z = self.prior.sample((num_samples,))
+    xs, _ = self.flow.backward(z)
+    return xs[-1], mean, log_sd
