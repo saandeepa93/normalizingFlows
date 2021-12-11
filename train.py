@@ -162,7 +162,7 @@ if __name__ == "__main__":
   # Define optimizer and loss
   optimizer = optim.Adam(model.parameters(), lr=lr)
 
-  scheduler = MultiStepLR(optimizer, milestones=[600, 1400], gamma=0.1)
+  scheduler = MultiStepLR(optimizer, milestones=[200, 1400], gamma=0.1)
 
   bhatta_loss = CustomLoss()
   best_loss = 1e5
