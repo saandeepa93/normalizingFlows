@@ -108,6 +108,7 @@ class ZeroNN(nn.Module):
     super().__init__()
 
     self.linear = nn.Linear(nin, nout)
+
     self.linear.weight.data.zero_()
     self.linear.bias.data.zero_()
 
@@ -220,14 +221,7 @@ class NormalizingFlowModel(nn.Module):
   
   def forward(self, x):
     zs, log_det = self.flow.forward(x)
-    
     mean, log_sd = self.prior(zs[-1]).chunk(2, 1)
-
-    # log_sd = log_sd.mean(0)
-    # mean = mean.mean(0)
-    # prior_logprob = gaussian_log_p(zs[-1], mean, log_sd).view(x.size(0), -1).sum(1)
-    
-    # prior_logprob = self.prior.log_prob(zs[-1]).view(x.size(0), -1).sum(1)
     return zs, log_det, mean, log_sd
 
   def backward(self, z):
