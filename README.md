@@ -12,6 +12,13 @@ python train.py
 
 ### Check the `plots/sample` directory for gaussinization and inverse function plots.
 
+## 3. Sample output
+### Gaussianized
+![](./artifacts/x.mp4)
+
+### Reconstruction
+![](./artifacts/x_recon.mp4)
+
 
 ## 3. Papers
 @INPROCEEDINGS{6050038,
