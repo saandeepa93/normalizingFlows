@@ -14,10 +14,17 @@ python train.py
 
 ## 3. Sample output
 ### Gaussianized
-![](./artifacts/x.mp4)
+<video width="320" height="240" controls>
+  <source src="./artifacts/x.mp4" type="video/mp4">
+</video>
+
+<!-- ![](./artifacts/x.mp4) -->
 
 ### Reconstruction
-![](./artifacts/x_recon.mp4)
+<video width="320" height="240" controls>
+  <source src="./artifacts/x_recon.mp4" type="video/mp4">
+</video>
+<!-- ![](./artifacts/x_recon.mp4) -->
 
 
 ## 3. Papers
