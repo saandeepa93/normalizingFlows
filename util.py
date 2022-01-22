@@ -4,6 +4,37 @@ import plotly.express as px
 import pandas as pd
 import matplotlib.pyplot as plt
 from math import pi, log
+import os
+import numpy as np
+from torchvision import io, transforms
+from PIL import Image
+from sys import exit as e
+
+def make_video():
+  trans = transforms.Compose([
+        transforms.Resize((480, 640)), 
+        transforms.ToTensor(), 
+        transforms.Normalize((0), (1))
+      ])
+
+  fname = [f"{i}.png" for i in np.arange(0, 2001, 20)]
+  fname_recon = [f"recon_{i}.png" for i in np.arange(0, 2001, 20)]
+
+  x_gauss, x_recon = [], []
+  for i in range(len(fname)):
+    fl_path = os.path.join("./plots/sample/all", fname[i])
+    fl_recon_path = os.path.join("./plots/sample/all", fname_recon[i])
+    x_gauss.append(trans(Image.open(fl_path))[:3])
+    x_recon.append(trans(Image.open(fl_recon_path))[:3])
+  
+  x_gauss = torch.stack(x_gauss)
+  x_recon = torch.stack(x_recon)
+  x_gauss = x_gauss.permute(0, 2, 3, 1)
+  x_recon = x_recon.permute(0, 2, 3, 1)
+  print(x_gauss.size())
+  print(x_recon.size())
+  io.write_video(f"./artifacts/x.mp4", x_gauss * 255, fps=10)
+  io.write_video(f"./artifacts/x_recon.mp4", x_recon * 255, fps=10)
 
 
 def plot_3d(x, prob, k):

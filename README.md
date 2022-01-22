@@ -13,18 +13,6 @@ python train.py
 ### Check the `plots/sample` directory for gaussinization and inverse function plots.
 
 ## 3. Sample output
-### Gaussianized
-<video width="320" height="240" controls>
-  <source src="./artifacts/x.mp4" type="video/mp4">
-</video>
-
-<!-- ![](./artifacts/x.mp4) -->
-
-### Reconstruction
-<video width="320" height="240" controls>
-  <source src="./artifacts/x_recon.mp4" type="video/mp4">
-</video>
-<!-- ![](./artifacts/x_recon.mp4) -->
 
 
 ## 3. Papers

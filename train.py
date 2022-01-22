@@ -3,6 +3,7 @@ from torch import nn, optim
 from torch.nn.init import xavier_normal_, zeros_, normal_, uniform_
 from torch.nn.utils import clip_grad_norm_
 from torch.distributions import Normal
+from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import MultiStepLR
 
 import matplotlib.pyplot as plt
@@ -11,7 +12,7 @@ from sklearn import datasets
 import itertools
 import numpy as np
 import time
-from math import log, pi, sqrt
+from math import log, pi, sqrt, exp
 import pandas as pd
 from sys import exit as e
 import plotly.express as px
@@ -98,18 +99,6 @@ def plot(arr, labels, ep):
   plt.savefig(f"./plots/sample/{ep}.png")
   plt.close()
 
-def get_dataset(n_samples):
-  moon, labels = make_moons(n_samples, noise=0.05)
-  return moon.astype(np.float32), labels
-
-
-def unbound(y):
-  y = (2 * y - 1) * torch.tensor(0.9)
-  y = (y + 1) / 2
-  print(y)
-  y = y.log() - (1. - y).log()
-  return y
-
 
 class DatasetMoons:
   """ two half-moons """
@@ -130,24 +119,27 @@ class DatasetMoons:
     y = iris.target
     return torch.from_numpy(X), torch.from_numpy(y)
 
-
+def compute_avg_grad(model):
+  avg_grad = 0
+  cnt = 0
+  for name, param in model.named_parameters():
+    avg_grad += param.grad.abs().mean().item()
+    cnt += 1
+  avg_grad /= cnt
+  return avg_grad
 
 
 if __name__ == "__main__":
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   torch.autograd.set_detect_anomaly(True)
-  epochs = 2001
+  epochs = 1201
   b_size = 256
   lr = 1e-3
-  lr2 = 1e-3
+  lr2 = 1e-4
   torch.manual_seed(0)
-  
   d = DatasetMoons()
+  writer = SummaryWriter()
   
-  # x, y = d.sample_gauss(1000)
-  # x, target = d.sample_iris()
-  # x = x[:, :2].type(torch.float32)
-
   # Glow paper
   flows = [Invertible1x1Conv(dim=2) for i in range(3)]
   norms = [ActNorm(dim=2) for _ in flows]
@@ -156,13 +148,14 @@ if __name__ == "__main__":
   model = NormalizingFlowModel(flows, 2)
 
   # model = nn.DataParallel(model)
-  # model = model.to(device)
+  model = model.to(device)
   # model.apply(weights_init)
 
   # Define optimizer and loss
   optimizer = optim.Adam(model.parameters(), lr=lr)
-
-  scheduler = MultiStepLR(optimizer, milestones=[200, 1400], gamma=0.1)
+  optimizer2 = optim.SGD(model.parameters(), lr=lr2)
+  scheduler = MultiStepLR(optimizer, milestones=[200, 600], gamma=0.1)
+  scheduler2 = MultiStepLR(optimizer2, milestones=[800], gamma=3.)
 
   bhatta_loss = CustomLoss()
   best_loss = 1e5
@@ -178,17 +171,23 @@ if __name__ == "__main__":
 
     start_time = time.time()
     # Likelihood maximization
-    # logprob, bloss = bhatta_loss(zs[-1], mean, log_sd, target, logdet, device)
     logprob, mus_per_class, log_sds_per_class = bhatta_loss(zs[-1], mean, log_sd, target, logdet, device)
     bloss = bhatta_loss.b_loss(zs[-1], target, mus_per_class, log_sds_per_class, device)
     loss1 = -torch.mean(logprob)
     loss2 = bloss
 
+    writer.add_scalar("NLLLoss/Train", loss1.item(), k)
+    writer.add_scalar("BLoss/Train", loss2.item(), k)
+
     # Gradient descent and optimization
     optimizer.zero_grad()
+    optimizer2.zero_grad()
+    # loss1.backward()
     loss1.backward(retain_graph=True)
-    loss2.backward()
+    avg = compute_avg_grad(model)
+    loss2.backward(retain_graph=False)
     optimizer.step()
+    optimizer2.step()
     
     if loss1.item() < best_loss:
       torch.save(model.state_dict(), f"./models/best_model.pt")
@@ -196,16 +195,20 @@ if __name__ == "__main__":
 
     # Generate plots
     if k % 100 == 0:
+      # print(compute_avg_grad(model) - avg)
       # for name, param in model.named_parameters():
       #   print(name, param.grad.abs().mean())
       z = zs[-1]
-      print(loss1.item(), loss2.item(), optimizer.param_groups[0]["lr"], k)
+      print(loss1.item(), exp(loss2.item()), optimizer.param_groups[0]["lr"], \
+        compute_avg_grad(model) - avg, k)
       plot(z.detach(), target, f"{k}")
       # plot_3d(z.detach(), prior_logprob.detach(), k, target)
       x_rec, mean, log_sd = model.sample(256)
       plot(x_rec.detach(), None, f"recon_{k}")
       # plot_grad_flow(model.named_parameters(), f"./plots/grad/{k}_high.png")
     scheduler.step()
-    
+    scheduler2.step()
   print(f"Best loss at {best_loss}")
+  writer.flush()
+  writer.close()
   

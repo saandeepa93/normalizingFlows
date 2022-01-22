@@ -17,6 +17,8 @@ class CustomLoss(nn.Module):
   def b_loss(self, z, target, mus_per_class, log_sds_per_class, device):
     # Initial the (b*k) sizes to hold log_ps and targets
     bhatta_loss = 0
+    bhatta_loss_log = torch.tensor(1.)
+
     log_p_lst = torch.zeros((256, 2), device = device)
     targets = torch.zeros((256, 2), device = device)
     for j in range(2):
@@ -27,14 +29,20 @@ class CustomLoss(nn.Module):
       p = log_p_lst[:, j]
       t = targets[:, j]
       t_1 = 1. - t
-      pwise = (0.5 * (p.unsqueeze(1) + p)).squeeze()
+      # pwise = (0.5 * (p.unsqueeze(1) + p)).squeeze()
+      pwise = (0.5 * (p.unsqueeze(1) + p))
 
       #Similarity feature coefficients
       sim_mask = (t.unsqueeze(1) @ t.unsqueeze(1).T).tril(-1)
       sim_cnt = (sim_mask == 1.).sum()
-      bc_sim = ((torch.exp(pwise) * sim_mask).sum())/sim_cnt
+      # bc_sim = ((torch.exp(pwise) * sim_mask).sum())/sim_cnt
+      
+      bc_sim_test = pwise * sim_mask
+      bc_sim_test = bc_sim_test[bc_sim_test != 0.]
+      bc_sim_sum = torch.logsumexp(bc_sim_test, dim=0)
+      bc_sim_new = bc_sim_sum - log(sim_cnt)
 
-    #   #Dissimilar feature coefficients
+      #Dissimilar feature coefficients
       diff_mask = torch.zeros((256, 256))
       for k in range(256):
         if t[k].item() == 1.:
@@ -43,14 +51,26 @@ class CustomLoss(nn.Module):
           diff_mask[k] = t
       diff_mask = (diff_mask.tril(-1))
       diff_cnt = (diff_mask == 1.).sum()
-      bc_diff = ((torch.exp(pwise) * diff_mask).sum())/diff_cnt
-
+      # bc_diff = ((torch.exp(pwise) * diff_mask).sum())/diff_cnt
+ 
+      bc_diff_res = pwise * diff_mask
+      bc_diff_res = bc_diff_res[bc_diff_res != 0.]
+      bc_diff_sum = torch.logsumexp(bc_diff_res, dim=0)
+      bc_diff_new = bc_diff_sum - log(diff_cnt)
+      
       #Calculate final bhatta loss  
-      bhatta_loss = bhatta_loss + (1. - bc_sim) + bc_diff
-    bhatta_loss = bhatta_loss/2
+      # bhatta_loss = bhatta_loss + (1. - bc_sim) + bc_diff
+
+      print(bc_sim_new.exp().item(), bc_diff_new.exp().item())
+      bc_sim_new = (1 - bc_sim_new.exp()).log()
+      bhatta_loss_log = torch.logaddexp(bhatta_loss_log, torch.logaddexp(bc_sim_new, bc_diff_new))
+
+    print("="*30)
+
+    # bhatta_loss = bhatta_loss/2
+    bhatta_loss = bhatta_loss_log - log(2)
+
     return bhatta_loss
-
-
 
   def forward(self, z, mean, log_sd, target, logdet, device):
     # NLL

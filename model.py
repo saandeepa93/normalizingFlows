@@ -40,6 +40,7 @@ class Invertible1x1Conv(nn.Module):
   def _assemble_W(self):
     """ assemble W from its pieces (P, L, U, S) """
     L = torch.tril(self.L, diagonal=-1) + torch.diag(torch.ones(self.dim))
+    # L = torch.tril(self.L, diagonal=-1) + torch.diag(torch.ones(self.dim, device=self.L.device))
     U = torch.triu(self.U, diagonal=1)
     W = self.P @ L @ (U + torch.diag(self.S))
     return W
@@ -113,8 +114,7 @@ class ZeroNN(nn.Module):
     self.linear.bias.data.zero_()
 
   def forward(self, input):
-    out = self.linear(input)
-    return out
+    return self.linear(input)
 
 
 class MLP(nn.Module):
@@ -191,13 +191,12 @@ class NormalizingFlow(nn.Module):
 
   def forward(self, x):
     m, _ = x.shape
-    log_det = torch.zeros(m)
+    log_det = torch.zeros(m, device=x.device)
     zs = [x]
     for flow in self.flows:
       x, ld = flow.forward(x)
       log_det += ld
       zs.append(x)
-    
     return zs, log_det
 
   def backward(self, z):
@@ -215,13 +214,14 @@ class NormalizingFlowModel(nn.Module):
   
   def __init__(self, flows, nin, prior=None):
     super().__init__()
-    # self.prior = prior
     self.prior = ZeroNN(nin, nin*2)
     self.flow = NormalizingFlow(flows)
   
   def forward(self, x):
     zs, log_det = self.flow.forward(x)
     mean, log_sd = self.prior(zs[-1]).chunk(2, 1)
+    # mean = torch.zeros((256, 2))
+    # log_sd = torch.zeros((256, 2))
     return zs, log_det, mean, log_sd
 
   def backward(self, z):
@@ -234,6 +234,5 @@ class NormalizingFlowModel(nn.Module):
     log_sd = log_sd.mean(0)
     mean = mean.mean(0)
     z = gaussian_sample(z_rec, mean, log_sd)
-    # z = self.prior.sample((num_samples,))
     xs, _ = self.flow.backward(z)
     return xs[-1], mean, log_sd
