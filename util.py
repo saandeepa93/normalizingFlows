@@ -5,10 +5,26 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from math import pi, log
 import os
+import yaml
 import numpy as np
 from torchvision import io, transforms
 from PIL import Image
 from sys import exit as e
+
+def compute_avg_grad(model):
+  avg_grad = 0
+  cnt = 0
+  for name, param in model.named_parameters():
+    avg_grad += param.grad.abs().mean().item()
+    cnt += 1
+  avg_grad /= cnt
+  return avg_grad
+
+
+def get_config(config_path):
+  with open(config_path) as file:
+    configs = yaml.load(file, Loader = yaml.FullLoader)
+  return configs
 
 def make_video():
   trans = transforms.Compose([
@@ -37,14 +53,16 @@ def make_video():
   io.write_video(f"./artifacts/x_recon.mp4", x_recon * 255, fps=10)
 
 
-def plot_3d(x, prob, k):
+def plot_3d(x, prob, k, target):
+  target = [str(i) for i in target.detach().numpy()]
   df = pd.DataFrame(x, columns=["x0", "x1"])
   df_2 = pd.DataFrame(prob, columns=["pdf"])
+  df_color = pd.DataFrame(target, columns=["color"])
   df = df.join(df_2)
-  fig = px.scatter_3d(df, x='x0', y='x1', z='pdf', title=f"multivariate")
+  df = df.join(df_color)
+  fig = px.scatter_3d(df, x='x0', y='x1', z='pdf', color='color', title=f"multivariate")
   fig.update_traces(marker=dict(size=6))
   fig.write_html(f"./plots/sample/html/{k}.html")
-
 
 
 def gaussian_log_p(x, mean, log_sd):
@@ -53,17 +71,12 @@ def gaussian_log_p(x, mean, log_sd):
 
 def weights_init(m):
   if isinstance(m, nn.Linear):
-    xavier_normal_(m.weight.data)
-    zeros_(m.bias.data)
-
-
-def plot_3d(x, prob, k):
-  df = pd.DataFrame(x, columns=["x0", "x1"])
-  df_2 = pd.DataFrame(prob, columns=["pdf"])
-  df = df.join(df_2)
-  fig = px.scatter_3d(df, x='x0', y='x1', z='pdf', title=f"multivariate")
-  fig.update_traces(marker=dict(size=6))
-  fig.write_html(f"./plots/sample/html/{k}.html")
+    std = 1. / sqrt(m.weight.data.size(1))
+    m.weight.data.uniform_(-std, std)
+    if m.bias is not None:
+      m.bias.data.uniform_(-std, std)
+      # m.bias.data.zero_()
+    # normal_(m.weight.data)
 
 def plot_mult(x, prob, k):
   fig, ax = plt.subplots(1, figsize=(8, 4))
