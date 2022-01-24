@@ -7,21 +7,19 @@ pip install -r requirements.txt
 
 ## 2. Gaussianize the moon dataset
 ```bash
-python train.py
+python train.py --config <type>
 ```
+
+\<type> can be selected from the `config.yaml` file (for e.g. master), which has all the hyperparameters.
+
 
 ### Check the `plots/sample` directory for gaussinization and inverse function plots.
 
 ## 3. Sample output
+  * Gaussianized data
 
+  <img src="./plots/sample/out/2000.png">
 
-## 3. Papers
-@INPROCEEDINGS{6050038,
-  author={Lee, Ken Yoong and Bretschneider, Timo Rolf},
-  booktitle={2011 IEEE International Geoscience and Remote Sensing Symposium}, 
-  title={Derivation of separability measures based on central complex Gaussian and Wishart distributions}, 
-  year={2011},
-  volume={},
-  number={},
-  pages={3740-3743},
-  doi={10.1109/IGARSS.2011.6050038}}
+  * Reconstructed data
+
+  <img src="./plots/sample/out/recon_2000.png">
