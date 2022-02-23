@@ -1,6 +1,6 @@
 master: 
   epochs: 1201
-  lr: 1e-3
+  lr: 4e-4
   lr2: 1e-4
   bsize: 256
   n_flow: 3
@@ -11,8 +11,8 @@ master:
   l2_gamma: 3.0
 
 trial1: 
-  epochs: 1201
-  lr: 1e-4
+  epochs: 3
+  lr: 1e-3
   lr2: 1e-4
   bsize: 256
   n_flow: 3
