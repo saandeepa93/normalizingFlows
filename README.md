@@ -18,8 +18,8 @@ python train.py --config <type>
 ## 3. Sample output
   * Gaussianized data
 
-  <img src="./plots/sample/out/2000.png">
+  <img src="./artifacts/1000.png">
 
   * Reconstructed data
 
-  <img src="./plots/sample/out/recon_2000.png">
+  <img src="./artifacts/recon_1000.png">
