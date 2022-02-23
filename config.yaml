@@ -1,0 +1,25 @@
+master: 
+  epochs: 1001
+  lr: 1e-3
+  lr2: 1e-3
+  bsize: 256
+  n_chan: 2
+  n_class: 2
+  n_flow: 8
+  nh: 32
+  lr_milestone: [200, 600]
+  lr_gamma: 0.1
+  lr2_milestone: [800]
+  l2_gamma: 3.0
+
+trial1: 
+  epochs: 3
+  lr: 1e-3
+  lr2: 1e-4
+  bsize: 256
+  n_flow: 3
+  nh: 32
+  lr_milestone: [200, 600]
+  lr_gamma: 0.1
+  lr2_milestone: [800]
+  l2_gamma: 3.0
