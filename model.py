@@ -104,12 +104,19 @@ class ZeroNN(nn.Module):
     super().__init__()
 
     self.linear = nn.Linear(in_chan, out_chan)
+    # self.linear2 = nn.Linear(in_chan, in_chan)
+    # self.linear3 = nn.Linear(in_chan, out_chan)
     self.linear.weight.data.zero_()
     self.linear.bias.data.zero_()
+    
+    # self.relu = nn.ReLU()
     self.scale = nn.Parameter(torch.zeros(1, out_chan))
   
   def forward(self, x):
     out = self.linear(x)
+    # out = self.relu(out)
+    # out = self.linear2(out)
+    # out = self.linear3(out)
     out = out * torch.exp(self.scale * 3)
     return out
 
@@ -202,8 +209,9 @@ class Glow(nn.Module):
   
   
     zero = torch.zeros_like(out)
-    mean, log_sd = self.prior(zero).chunk(2, 1)
-    # mean, log_sd = self.prior(out).chunk(2, 1)
+    # mean, log_sd = self.prior(zero).chunk(2, 1)
+    mean, log_sd = self.prior(out).chunk(2, 1)
+
     
     log_p = gaussian_log_p(out, mean, log_sd)
     log_p = log_p.view(b_size, -1).sum(1)

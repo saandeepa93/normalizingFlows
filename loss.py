@@ -24,9 +24,11 @@ class CustomLoss(nn.Module):
     bc_diff_total = []
 
     log_p_lst = torch.zeros((z.size(0), 2))
+    # log_p_lst = torch.zeros((z.size(0), z.size(1), 2))
     targets = torch.zeros((z.size(0), 2))
     for j in range(self.n_class):
       targets[target==j, j] = 1
+      # log_p_lst[:, :, j] = self.gaussian_log_p(z, mus_per_class[j], log_sds_per_class[j])
       log_p_lst[:, j] = self.gaussian_log_p(z, mus_per_class[j], log_sds_per_class[j]).sum(1)
     
     for j in range(2):

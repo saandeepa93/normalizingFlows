@@ -29,6 +29,10 @@ class DatasetMoons:
       n_redundant=0, n_repeated=0, n_classes=2, n_clusters_per_class=2,class_sep=2,\
         flip_y=0,weights=[0.5,0.5], random_state=17)
     return torch.from_numpy(X), torch.from_numpy(y)
+  
+  def sample_circles(self, n):
+    noisy_circles = datasets.make_circles(n_samples=n_samples, factor=0.5, noise=0.05)
+    print(noisy_circles.shape)
 
   def sample_iris(self):
     iris = load_iris()
@@ -76,7 +80,6 @@ if __name__ == "__main__":
 
   z_rec = torch.FloatTensor(256, 2).normal_(0, 1)
 
-
   model.train()
   for k in range(epochs):
     x, target = get_dataset(bsize)
@@ -90,17 +93,17 @@ if __name__ == "__main__":
 
     z, logdet, mean, log_sd, prob = model(x)
     log_prob, mus_per_class, log_sds_per_class, prob_x, log_p_total = criterion(z, mean, log_sd, target, logdet)
-    sim_loss, diff_loss = criterion.b_loss(z, target, mus_per_class, log_sds_per_class)
+    # sim_loss, diff_loss = criterion.b_loss(z, target, mus_per_class, log_sds_per_class)
 
     loss = -log_prob
-    loss2 = -sim_loss
-    loss3 = diff_loss
+    # loss2 = -sim_loss
+    # loss3 = diff_loss
     # loss = loss + loss2
-    # loss2 = torch.tensor(1., requires_grad=True)
-    # loss3 = torch.tensor(1., requires_grad=True)
+    loss2 = torch.tensor(1., requires_grad=True)
+    loss3 = torch.tensor(1., requires_grad=True)
 
     model.zero_grad()
-    loss.backward(retain_graph=True)
+    loss.backward(retain_graph=False)
     avg = ut.compute_avg_grad(model)
     # loss2.backward(retain_graph=True)
     grad2 = ut.compute_avg_grad(model) - avg
@@ -118,16 +121,18 @@ if __name__ == "__main__":
       best_loss = loss.item()
 
     if k % 100 == 0:
-      ut.plot_grad_flow(model.named_parameters(), f"./plots/grad/{k}_high.png")
+      # print(mus_per_class, log_sds_per_class)
+      # ut.plot_grad_flow(model.named_parameters(), f"./plots/grad/{k}_high.png")
       ut.plot(z.detach(), target.detach(), k)
-      ut.plot(model.reverse(z_rec).detach(), None, f"recon_{k}.png")
+      z_rec = torch.normal(mean, log_sd.exp())
+      ut.plot(model.reverse(z_rec).detach(), target, f"recon_{k}.png")
       ut.plot_3d(z.detach(), prob.detach(), k, target)
       print(f"NLL: {round(loss.item(), 4)} BLL: {round(loss2.item(), 4), round(loss3.item(), 4)} \
         lr: {optimizer.param_groups[0]['lr']} NLL gradients: {round(avg, 4)} \
           BLL gradients: {round(grad2, 4), round(grad3, 4)} epoch: {k} log_p_total: {log_p_total.exp().data}")
       # print(loss.item(), loss2.item(), loss3.item(), avg, grad2, grad3)
   
-  _, _, mean, log_sd, _ = model(x)
-  # print(f"Mean, log_sd {mean, log_sd}")
+  log_prob, mus_per_class, log_sds_per_class, prob_x, log_p_total = criterion(z, mean, log_sd, target, logdet)
+  print(f"Mean, log_sd {mus_per_class, log_sds_per_class}")
   print(f"Best loss at {best_loss}")
   
